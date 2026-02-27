@@ -1,16 +1,36 @@
-﻿# -*- coding: utf-8 -*-
 """
-主流程脚本（提交版，纯配置驱动）
+主流程脚本_1（固定参数版）
 ================================
-步骤：
- 1) 加载数据
- 2) 计算因子并预处理
- 3) 单因子测试，保存报告
- 4) 使用 base.py 内置有效因子与合成方法
- 5) 使用 base.py 内置 Regime 参数
- 6) 生成等权 / 组合优化权重调仓计划
- 7) 运行回测，输出绩效摘要与净值序列
+项目主流程（5步）：
+  1) 因子设计和测试
+  2) 因子合成
+  3) 组合优化
+  4) 宏观仓位调整
+  5) 模型调参（本脚本不执行）
+
+说明：
+  - run_main 仅使用 base.py 固定参数，不做命令行覆盖和在线调参。-- 读取并校验组合参数（top_n/cov_window/cvar_alpha/cvar_method/turnover_lambda/hybrid_beta/max_weight）。
+  - 回测区间口径：BACKTEST_START(2021-01-04) ~ 2025-10-30。
+  - 一次运行同时产出“等权组合”与“优化组合(固定优化参数)”两套基线回测结果。
+  - 关键防泄漏约束：
+  - 调仓日为每周首个交易日；
+  - 调仓信号使用前一交易日；
+  - 优化窗口仅使用 <= 信号日 的历史收益。
+  1) 创建时间戳输出目录，统一保存本次运行的中间文件与结果。
+  2) 加载量价与宏观数据，构建 close_matrix。
+  3) 计算因子并做截面预处理（rank）。
+  4) 单因子 Rank IC 测试（IC 向后平移，避免前视偏差），保存测试报告。
+  5) 使用 base.py 固定有效因子 + 固定合成方法，生成 composite 截面得分。
+  6) 计算 Regime 仓位系数（或关闭 Regime 时恒为 1.0），并保存统计。
+  7) 生成两类调仓计划：
+     - 等权计划：调仓日选 TopN，等权分配并满足单票上限/最少持仓约束；
+     - 优化计划：调仓日先选 TopN，再用历史窗口收益进行风险优化（RP/MV/CVaR/Hybrid）。
+  8) 将 Regime 仓位系数应用到两类调仓计划（总仓位可小于 1，剩余为现金）。
+  9) 批量运行回测，导出净值、图表与绩效汇总。
+  
 """
+
+
 from datetime import datetime
 
 import pandas as pd
@@ -52,92 +72,138 @@ from signalfive.backtest.engine import (
 from signalfive.portfolio.regime import calc_position_scale, apply_position_scale, summarize_regime
 
 
+STRATEGY_EQ_NAME = "等权组合"
+STRATEGY_OPT_FIXED_NAME = "优化组合(固定优化参数)"
+BACKTEST_END = "2025-10-30"
+
+
+def _resolve_fixed_run_configs() -> tuple[dict, dict, dict, dict]:
+    """按流程分组整理 run_main 使用的固定参数。"""
+    default_params = dict(DEFAULT_PORTFOLIO_PARAMS)
+
+    factor_cfg = {
+        "combine_method": str(COMBINE_METHOD),
+        "effective_factors": list(DEFAULT_EFFECTIVE_FACTORS),
+        "forward_shift": int(FORWARD_RETURN_PERIODS[0]),
+    }
+
+    optimization_cfg = {
+        "optimizer": str(OPTIMIZER_METHOD),
+        "top_n": int(default_params.get("top_n", TOP_N)),
+        "cov_window": int(default_params.get("cov_window", COV_LOOKBACK)),
+        "cvar_alpha": float(default_params.get("cvar_alpha", CVAR_ALPHA)),
+        "cvar_method": str(default_params.get("cvar_method", CVAR_METHOD)),
+        "turnover_lambda": float(default_params.get("turnover_lambda", CVAR_TURNOVER_LAMBDA)),
+        "hybrid_beta": float(default_params.get("hybrid_beta", HYBRID_BETA)),
+        "max_weight": float(default_params.get("max_weight", MAX_SINGLE_WEIGHT)),
+    }
+
+    regime_cfg = {
+        "mode": str(REGIME_MODE),
+        "relax_gamma": float(REGIME_RELAX_GAMMA),
+        "stress_threshold": (
+            float(REGIME_STRESS_THRESHOLD) if REGIME_STRESS_THRESHOLD is not None else None
+        ),
+        "max_daily_step": float(REGIME_MAX_STEP) if float(REGIME_MAX_STEP) > 0 else None,
+    }
+
+    backtest_cfg = {
+        "start": str(BACKTEST_START),
+        "end": str(BACKTEST_END),
+    }
+
+    _validate_fixed_configs(optimization_cfg=optimization_cfg, regime_cfg=regime_cfg)
+    return factor_cfg, optimization_cfg, regime_cfg, backtest_cfg
+
+
+def _validate_fixed_configs(optimization_cfg: dict, regime_cfg: dict) -> None:
+    """固定参数合法性校验（run_main 不涉及模型调参参数）。"""
+    max_weight = float(optimization_cfg["max_weight"])
+    top_n = int(optimization_cfg["top_n"])
+    cov_window = int(optimization_cfg["cov_window"])
+    cvar_alpha = float(optimization_cfg["cvar_alpha"])
+    turnover_lambda = float(optimization_cfg["turnover_lambda"])
+    hybrid_beta = float(optimization_cfg["hybrid_beta"])
+    relax_gamma = float(regime_cfg["relax_gamma"])
+    max_daily_step = regime_cfg["max_daily_step"]
+
+    if max_weight > MAX_SINGLE_WEIGHT:
+        print(f"  警告: max_weight={max_weight:.4f} 超过上限 {MAX_SINGLE_WEIGHT:.4f}，已截断。")
+        optimization_cfg["max_weight"] = float(MAX_SINGLE_WEIGHT)
+        max_weight = float(MAX_SINGLE_WEIGHT)
+    if top_n < MIN_HOLDINGS:
+        raise ValueError(f"top_n={top_n} 小于最小持仓数 MIN_HOLDINGS={MIN_HOLDINGS}")
+    if cov_window <= 0:
+        raise ValueError(f"cov_window 必须 > 0，当前为 {cov_window}")
+    if not (0.0 < cvar_alpha < 1.0):
+        raise ValueError(f"cvar_alpha 必须在 (0,1) 内，当前为 {cvar_alpha}")
+    if turnover_lambda < 0:
+        raise ValueError(f"turnover_lambda 不能为负，当前为 {turnover_lambda}")
+    if not (0.0 <= hybrid_beta <= 1.0):
+        raise ValueError(f"hybrid_beta 必须在 [0,1] 内，当前为 {hybrid_beta}")
+    if max_weight <= 0:
+        raise ValueError(f"max_weight 必须 > 0，当前为 {max_weight}")
+    if not (0.0 <= relax_gamma <= 1.0):
+        raise ValueError(f"REGIME_RELAX_GAMMA 必须在 [0,1] 内，当前为 {relax_gamma}")
+    if max_daily_step is not None and float(max_daily_step) < 0:
+        raise ValueError(f"REGIME_MAX_STEP 不能为负，当前为 {max_daily_step}")
+
+
 def main() -> None:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     run_dir = OUTPUT_DIR / ts
     run_dir.mkdir(parents=True, exist_ok=True)
     print(f"本次运行输出目录: {run_dir}\n")
 
-    # 固定提交参数（全部来自 base.py）
-    default_params = dict(DEFAULT_PORTFOLIO_PARAMS)
-    top_n_use = int(default_params.get("top_n", TOP_N))
-    cov_window_use = int(default_params.get("cov_window", COV_LOOKBACK))
-    cvar_alpha_use = float(default_params.get("cvar_alpha", CVAR_ALPHA))
-    cvar_method_use = str(default_params.get("cvar_method", CVAR_METHOD))
-    turnover_lambda_use = float(default_params.get("turnover_lambda", CVAR_TURNOVER_LAMBDA))
-    hybrid_beta_use = float(default_params.get("hybrid_beta", HYBRID_BETA))
-    max_weight_use = float(default_params.get("max_weight", MAX_SINGLE_WEIGHT))
+    factor_cfg, optimization_cfg, regime_cfg, backtest_cfg = _resolve_fixed_run_configs()
 
-    if max_weight_use > MAX_SINGLE_WEIGHT:
-        print(f"  警告: max_weight={max_weight_use:.4f} 超过上限 {MAX_SINGLE_WEIGHT:.4f}，已截断。")
-        max_weight_use = MAX_SINGLE_WEIGHT
-    if top_n_use < MIN_HOLDINGS:
-        raise ValueError(f"top_n={top_n_use} 小于最小持仓数 MIN_HOLDINGS={MIN_HOLDINGS}")
-    if not (0.0 < cvar_alpha_use < 1.0):
-        raise ValueError(f"cvar_alpha 必须在 (0,1) 内，当前为 {cvar_alpha_use}")
-    if cov_window_use <= 0:
-        raise ValueError(f"cov_window 必须 > 0，当前为 {cov_window_use}")
-    if turnover_lambda_use < 0:
-        raise ValueError(f"turnover_lambda 不能为负，当前为 {turnover_lambda_use}")
-    if not (0.0 <= hybrid_beta_use <= 1.0):
-        raise ValueError(f"hybrid_beta 必须在 [0,1] 内，当前为 {hybrid_beta_use}")
-    if max_weight_use <= 0:
-        raise ValueError(f"max_weight 必须 > 0，当前为 {max_weight_use}")
-    if not (0.0 <= float(REGIME_RELAX_GAMMA) <= 1.0):
-        raise ValueError(f"REGIME_RELAX_GAMMA 必须在 [0,1] 内，当前为 {REGIME_RELAX_GAMMA}")
-    if float(REGIME_MAX_STEP) < 0:
-        raise ValueError(f"REGIME_MAX_STEP 不能为负，当前为 {REGIME_MAX_STEP}")
-
-    print("参数来源: base.py（无命令行覆盖）")
+    print("参数来源: base.py（固定参数，无命令行覆盖）")
+    print("模型调参: run_main 不执行模型调参，直接使用固定优化参数。")
+    print(
+        "因子参数: "
+        f"combine_method={factor_cfg['combine_method']}, "
+        f"forward_shift={factor_cfg['forward_shift']}, "
+        f"fixed_effective_factors={len(factor_cfg['effective_factors'])}"
+    )
     print(
         "固定优化参数: "
-        f"top_n={top_n_use}, "
-        f"cov_window={cov_window_use}, "
-        f"alpha={cvar_alpha_use:.6f}, "
-        f"method={cvar_method_use}, "
-        f"turnover_lambda={turnover_lambda_use:.6g}, "
-        f"hybrid_beta={hybrid_beta_use:.4f}, "
-        f"max_weight={max_weight_use:.4f}"
+        f"optimizer={optimization_cfg['optimizer']}, "
+        f"top_n={optimization_cfg['top_n']}, "
+        f"cov_window={optimization_cfg['cov_window']}, "
+        f"cvar_alpha={optimization_cfg['cvar_alpha']:.6f}, "
+        f"cvar_method={optimization_cfg['cvar_method']}, "
+        f"turnover_lambda={optimization_cfg['turnover_lambda']:.6g}, "
+        f"hybrid_beta={optimization_cfg['hybrid_beta']:.4f}, "
+        f"max_weight={optimization_cfg['max_weight']:.4f}"
     )
     print(
-        "固定 Regime 参数: "
-        f"mode={REGIME_MODE}, "
-        f"relax_gamma={float(REGIME_RELAX_GAMMA):.3f}, "
-        f"stress_threshold={REGIME_STRESS_THRESHOLD}, "
-        f"max_daily_step={REGIME_MAX_STEP}"
+        "Regime 参数: "
+        f"mode={regime_cfg['mode']}, "
+        f"relax_gamma={regime_cfg['relax_gamma']:.3f}, "
+        f"stress_threshold={regime_cfg['stress_threshold']}, "
+        f"max_daily_step={regime_cfg['max_daily_step']}"
     )
-    print(f"固定合成方法: {COMBINE_METHOD}")
-    print(f"固定有效因子({len(DEFAULT_EFFECTIVE_FACTORS)}): {list(DEFAULT_EFFECTIVE_FACTORS)}")
 
     # ====================================================================
-    # 1) 数据加载
+    # Step 1) 因子设计和测试（含数据加载）
     # ====================================================================
     print("=" * 60)
-    print("Step 1: 加载数据")
+    print("Step 1: 因子设计和测试（含数据加载）")
     data = load_all()
     close_matrix = data["close_matrix"]
     print(f"  收盘价矩阵: {close_matrix.shape}")
 
-    # ====================================================================
-    # 2) 因子计算与预处理
-    # ====================================================================
-    print("=" * 60)
-    print("Step 2: 计算因子并预处理")
     panel_wide, macro_df = compute_factors(data["aligned"])
     processed = prepare_factor_matrices(panel_wide, method="rank")
     print(f"  面板因子数: {len(processed)}")
 
-    # ====================================================================
-    # 3) 单因子测试
-    # ====================================================================
-    print("=" * 60)
-    print("Step 3: 单因子 Rank IC 测试")
     _, ic_series_dict = test_all_factors(processed, close_matrix)
 
     # 严格防前视偏差：IC[t] 依赖 t->t+fwd 收益，需向后平移 fwd 才可在实盘时点观测
-    fwd_shift = FORWARD_RETURN_PERIODS[0]
-    shifted_ic = {name: ic.shift(fwd_shift) for name, ic in ic_series_dict.items()}
-    train_cutoff = pd.Timestamp(BACKTEST_START) - pd.Timedelta(days=1)
+    shifted_ic = {
+        name: ic.shift(int(factor_cfg["forward_shift"])) for name, ic in ic_series_dict.items()
+    }
+    train_cutoff = pd.Timestamp(backtest_cfg["start"]) - pd.Timedelta(days=1)
     auto_effective, prestart_summary = select_effective_factors_from_ic(
         shifted_ic, cutoff=str(train_cutoff.date())
     )
@@ -146,7 +212,7 @@ def main() -> None:
     print(f"  回测前样本测试已保存: {prestart_path}")
     print(f"  自动筛选有效因子 ({len(auto_effective)}): {auto_effective}")
 
-    effective = list(DEFAULT_EFFECTIVE_FACTORS)
+    effective = list(factor_cfg["effective_factors"])
     missing = [f for f in effective if f not in processed]
     if missing:
         raise ValueError(f"base.py 固定因子中存在未计算因子: {missing}")
@@ -157,43 +223,70 @@ def main() -> None:
     print(f"  有效因子列表已保存: {effective_path}")
 
     # ====================================================================
-    # 4) 因子合成
+    # Step 2) 因子合成
     # ====================================================================
     print("=" * 60)
-    print("Step 4: 因子合成")
-    composite = combine_factors(processed, ic_series_dict, effective, method=COMBINE_METHOD)
+    print("Step 2: 因子合成")
+    composite = combine_factors(
+        processed, ic_series_dict, effective, method=str(factor_cfg["combine_method"])
+    )
     export_composite_factor(composite, output_path=str(run_dir / "合成因子序列.csv"))
 
     # ====================================================================
-    # 5) 宏观 Regime 仓位信号
+    # Step 3) 组合优化（固定参数）
     # ====================================================================
     print("=" * 60)
-    print("Step 5: 宏观 Regime 仓位调节")
-    if REGIME_MODE == "off":
+    print("Step 3: 组合优化（固定参数）")
+    # 回测区间说明：本脚本回测起点为 BACKTEST_START(2021-01-04)，终点为 2025-10-30。
+    eq_schedule = build_equal_weight_schedule(
+        composite,
+        close_matrix,
+        top_n=int(optimization_cfg["top_n"]),
+        max_weight=float(optimization_cfg["max_weight"]),
+        min_holdings=MIN_HOLDINGS,
+    )
+    print(f"  等权调仓日数: {len(eq_schedule)}")
+
+    # 回测区间说明：本脚本回测起点为 BACKTEST_START(2021-01-04)，终点为 2025-10-30。
+    opt_schedule = build_optimized_schedule(
+        composite,
+        close_matrix,
+        optimizer=str(optimization_cfg["optimizer"]),
+        top_n=int(optimization_cfg["top_n"]),
+        max_weight=float(optimization_cfg["max_weight"]),
+        min_holdings=MIN_HOLDINGS,
+        cov_window=int(optimization_cfg["cov_window"]),
+        cvar_alpha=float(optimization_cfg["cvar_alpha"]),
+        cvar_method=str(optimization_cfg["cvar_method"]),
+        turnover_lambda=float(optimization_cfg["turnover_lambda"]),
+        hybrid_beta=float(optimization_cfg["hybrid_beta"]),
+    )
+    print(f"  优化调仓日数: {len(opt_schedule)}")
+
+    # ====================================================================
+    # Step 4) 宏观仓位调整
+    # ====================================================================
+    print("=" * 60)
+    print("Step 4: 宏观仓位调整")
+    if str(regime_cfg["mode"]) == "off":
         position_scale = pd.Series(1.0, index=macro_df.index, name="position_scale")
         print("  Regime 已关闭：position_scale 恒为 1.0")
     else:
-        stress_threshold_use = (
-            float(REGIME_STRESS_THRESHOLD)
-            if REGIME_STRESS_THRESHOLD is not None
-            else None
-        )
-        max_step_use = float(REGIME_MAX_STEP) if float(REGIME_MAX_STEP) > 0 else None
         position_scale = calc_position_scale(
             macro_df,
             smooth_window=5,
-            relax_gamma=float(REGIME_RELAX_GAMMA),
-            stress_threshold=stress_threshold_use,
-            max_daily_step=max_step_use,
+            relax_gamma=float(regime_cfg["relax_gamma"]),
+            stress_threshold=regime_cfg["stress_threshold"],
+            max_daily_step=regime_cfg["max_daily_step"],
             stress_factors=("F01", "F02", "F04"),
         )
+        regime_stats = summarize_regime(position_scale, start_date=backtest_cfg["start"])
         print(
             "  Regime参数: "
-            f"relax_gamma={float(REGIME_RELAX_GAMMA):.3f}, "
-            f"stress_threshold={stress_threshold_use}, "
-            f"max_daily_step={max_step_use}"
+            f"relax_gamma={float(regime_cfg['relax_gamma']):.3f}, "
+            f"stress_threshold={regime_cfg['stress_threshold']}, "
+            f"max_daily_step={regime_cfg['max_daily_step']}"
         )
-        regime_stats = summarize_regime(position_scale, start_date=BACKTEST_START)
         print("  仓位系数统计 (回测期):")
         print(f"    均值={regime_stats['mean']:.2%}, 中位数={regime_stats['median']:.2%}")
         print(f"    最小={regime_stats['min']:.2%}, 最大={regime_stats['max']:.2%}")
@@ -209,65 +302,33 @@ def main() -> None:
     ps_df.to_csv(ps_path)
     print(f"  仓位系数已保存: {ps_path}")
 
-    # ====================================================================
-    # 6) 调仓计划
-    # ====================================================================
-    print("=" * 60)
-    print("Step 6: 生成调仓计划")
-    eq_schedule = build_equal_weight_schedule(
-        composite,
-        close_matrix,
-        top_n=top_n_use, # 等权调仓时，每次选 Top N 只 ETF    
-        max_weight=max_weight_use,
-        min_holdings=MIN_HOLDINGS,
-    )
-    print(f"  等权调仓日数: {len(eq_schedule)}")
-
-    opt_schedule = build_optimized_schedule( # 生成优化权重调仓计划：{date: pd.Series(weights)} 先选 Top N，再用过去 cov_window 日的协方差做优化。
-        composite, close_matrix,
-        optimizer=OPTIMIZER_METHOD,
-        top_n=top_n_use,
-        max_weight=max_weight_use,
-        min_holdings=MIN_HOLDINGS,
-        cov_window=cov_window_use,
-        cvar_alpha=cvar_alpha_use,
-        cvar_method=cvar_method_use,
-        turnover_lambda=turnover_lambda_use,
-        hybrid_beta=hybrid_beta_use,
-    )
-    print(f"  优化器: {OPTIMIZER_METHOD}")
-    print(f"  TopN: {top_n_use}")
-    print(
-        "  优化参数: "
-        f"cov_window={cov_window_use}, "
-        f"alpha={cvar_alpha_use:.6f}, "
-        f"method={cvar_method_use}, "
-        f"turnover_lambda={turnover_lambda_use:.6g}, "
-        f"hybrid_beta={hybrid_beta_use:.4f}, "
-        f"max_weight={max_weight_use:.4f}"
-    )
-    print(f"  优化调仓日数: {len(opt_schedule)}")
-
-    # 应用宏观仓位调节
-    eq_schedule = apply_position_scale(eq_schedule, position_scale) # 将仓位缩放系数应用到调仓计划上。
+    eq_schedule = apply_position_scale(eq_schedule, position_scale)
     opt_schedule = apply_position_scale(opt_schedule, position_scale)
-    if REGIME_MODE == "off":
+    if str(regime_cfg["mode"]) == "off":
         print("  Regime 已关闭：未进行额外仓位缩放")
     else:
         print("  已应用宏观 Regime 仓位调节")
 
     # ====================================================================
-    # 7) 回测
+    # Step 5) 模型调参（run_main 不执行）
     # ====================================================================
     print("=" * 60)
-    print("Step 7: 运行回测")
+    print("Step 5: 模型调参")
+    print("  run_main 为固定参数基线流程：模型调参已关闭。")
+
+    # ====================================================================
+    # Step 6) 回测与结果导出
+    # ====================================================================
+    print("=" * 60)
+    print("Step 6: 运行回测并导出结果")
+    print(f"  回测区间: {backtest_cfg['start']} ~ {backtest_cfg['end']}")
     schedules = {
-        "等权组合": eq_schedule,
-        "优化后组合": opt_schedule,
+        STRATEGY_EQ_NAME: eq_schedule,
+        STRATEGY_OPT_FIXED_NAME: opt_schedule,
     }
     res = run_backtests(close_matrix, schedules)
 
-    navs = extract_nav(res)
+    navs = extract_nav(res, start_date=backtest_cfg["start"])
     export_nav(navs, output_dir=run_dir)
     plot_paths = export_backtest_plots(navs, output_dir=run_dir)
     if plot_paths:

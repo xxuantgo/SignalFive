@@ -18,7 +18,6 @@
 import numpy as np
 import pandas as pd
 import os
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 import bt
@@ -384,7 +383,7 @@ def export_nav(navs: dict, output_dir=None):
     """导出净值序列到 CSV"""
     output_dir = output_dir or OUTPUT_DIR
     for name, nav in navs.items():
-        path = output_dir / f"{name}_净值序列.csv"
+        path = output_dir / f"净值序列_{name}.csv"
         nav_df = nav.to_frame(name="nav")
         nav_df.index.name = "date"
         nav_df.to_csv(path)
@@ -464,8 +463,7 @@ def export_backtest_plots(navs: dict, output_dir=None) -> dict:
     ax.grid(alpha=0.25)
     ax.legend()
     fig.autofmt_xdate()
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    nav_name = f"回测净值曲线_{ts}.png"
+    nav_name = "回测净值曲线.png"
     nav_path = output_dir / nav_name
     fig.savefig(nav_path, bbox_inches="tight")
     plt.close(fig)
@@ -481,7 +479,7 @@ def export_backtest_plots(navs: dict, output_dir=None) -> dict:
     ax.grid(alpha=0.25)
     ax.legend()
     fig.autofmt_xdate()
-    dd_name = f"回测回撤曲线_{ts}.png"
+    dd_name = "回测回撤曲线.png"
     dd_path = output_dir / dd_name
     fig.savefig(dd_path, bbox_inches="tight")
     plt.close(fig)

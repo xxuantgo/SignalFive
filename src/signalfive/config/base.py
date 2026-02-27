@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 全局配置参数
 ============
@@ -23,7 +23,7 @@ BACKTEST_START = "2021-01-04"          # 回测起始日（赛题硬性要求）
 RISK_FREE_RATE = 0.0                   # 无风险利率（赛题要求 0%）
 TRANSACTION_COST = 2.5 / 10000         # 交易手续费 万分之2.5
 REBALANCE_FREQ = "W"                   # 调仓频率：周度
-TOP_N = 3                              # 每期选取 Top N 只 ETF（≥3）
+TOP_N = 3                              # 要求每期选取 Top N 只 ETF（≥3）
 MAX_SINGLE_WEIGHT = 0.35               # 单只 ETF 权重上限 35%
 MIN_HOLDINGS = 3                       # 最少持仓数量
 
