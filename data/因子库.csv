@@ -1,0 +1,38 @@
+ID,因子名称,所属因子库,出处,表达式
+A01,波动率缩放动量,CTA 通用,华泰证券《CTA 策略系列：动量优化》,"Ret_20 / Std(Ret, 20)"
+A02,路径效率 (ER),CTA 通用,光大证券《效率系数》,"Net_Chg / Sum(Abs_Chg)"
+A03,时序动量加速器,Exotic,天风证券《高频因子：加速度》,"Slope(Close, 10) - Slope(Close, 20)"
+A04,MACD 柱 (标准化),Tech 指标,广发证券《技术指标的量化择时》,"(EMA_12 - EMA_26) / Close"
+A05,RSI 相对强弱,Tech 指标,海通证券《RSI 的多因子应用》,"RSI(Close, 14)"
+A06,最高价突破,Donchian,申万宏源《突破策略在 ETF 中的应用》,"Close / Max(High, 60)"
+B01,Alpha #006,Alpha 101,招商证券《量价相关性》,"-1 * Ts_Rank(Corr(Close, Vol, 20))"
+B02,Alpha #012,Alpha 101,WorldQuant,"Sign(Delta(Vol)) * -Delta(Close)"
+B03,Alpha #001,GTJA 191,国泰君安《基于短周期价量特征》,"(Close - MA_20) / Std(Close, 20)"
+B04,Alpha #013,GTJA 191,国泰君安,"Rank(Cov(Close, Vol))"
+B05,KD 指标 (K),Stochastic,海通证券《KDJ 的量化改进》,"(Close - Low_N) / (High_N - Low_N)"
+B06,加权收盘偏离,Alpha 101,Alpha #041,Close / VWAP - 1
+C01,下行波动占比,Risk Parity,兴业证券《剔除下行风险》,Std(Ret_Down) / Std(Ret_Total)
+C02,极差波动率,Parkinson,长江证券《高频波动率低频化》,"Log(High / Low)^2"
+C03,Alpha #023,GTJA 191,国泰君安,"Std(If(Close>Delay, Close, 0))"
+C04,ATR 占比,Tech 指标,华泰证券《波动率择时》,"ATR(14) / Close"
+D01,Amihud 变化率,Liquidity,广发证券《流动性因子实证》,Delta(Abs(Ret) / Amount)
+D02,日内动量,Micro,中信建投《收盘效应》,"(Close - Open) / (High - Low)"
+D03,高低价差比,Micro,Alpha #015,"Sum(High-Low, N) / Sum(Vol, N)"
+D04,开盘跳空,Micro,东方证券《隔夜信息含量》,"(Open - Delay(Close)) / Delay(Close)"
+E01,偏度 (Skew),High Moment,申万宏源《高阶矩因子》,"-1 * Skew(Ret, 20)"
+E02,峰度 (Kurt),High Moment,申万宏源《高阶矩因子》,"-1 * Kurt(Ret, 20)"
+F01,VIX 恐慌状态,Macro Regime,Whaley (1993) / 华泰期货《VIX应用初探》,Z_Score(市场恐慌程度：VIX指数)
+F02,信用利差状态,Macro Regime,Chen (1986) / 华泰证券《周期轮动》,Z_Score(信用利差：信用债端)
+F03,期限结构状态,Macro Regime,Estrella (1998) / 广发证券《利率期限》,Z_Score(期限利差：中长期债端)
+F04,通胀剪刀差,Macro Derived,招商证券《通胀剪刀差与行业轮动》,Z_Score(生产端通胀 - 消费端通胀)
+F05,大小盘估值溢价,Macro Derived,申万宏源《大小盘风格轮动模型》,资本市场流动性：小盘PE / 大盘PE
+F06,中美实际利差,Macro Derived,中信证券《中美利差与跨境资金》,Z_Score(国债指数) - Z_Score(美国实际利率)
+G01,黄金敏感度,Cross-Asset,Baur (2010) / 海通证券《黄金避险属性》,"Beta(Ret_ETF, Ret_518880)"
+G02,美股敏感度,Cross-Asset,Asness (2013) / 招商证券《跨境 ETF》,"Beta(Ret_ETF, Ret_Nasdaq_ETF)"
+G03,债券敏感度,Cross-Asset,Fama (1993) / 兴业证券《类债资产》,"Beta(Ret_ETF, Ret_Bond_Yield)"
+H01,量价背离度,Tech,Blume (1994) / 国信证券《量价关系》,"Corr(Close, Volume, 20)"
+K02,高点引力场,,,"20 - ts_argmax(high, 20) - 1"
+K04,相对时序分位数,,,"ts_rank(volume, 20)"
+M01,日内与隔夜博弈差,,,"(open / shift(close, 1) - 1) - (close / open - 1)"
+M03,绝对买卖压失衡,,,"ts_sum(IF(close > shift(close, 1), volume, 0), 20) / ts_sum(IF(close < shift(close, 1), volume, 0), 20)"
+N01,纯特质性动量,,,"(close / shift(close, 20) - 1) - cross_mean(close / shift(close, 20) - 1)"

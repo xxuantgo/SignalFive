@@ -1,0 +1,35 @@
+# 固定版本的环境配置文件 - 基于测试通过的兼容版本
+# 创建日期: 2026-02-22
+# Python版本: 3.11.14
+
+# 核心数据处理库
+numpy==1.26.4
+pandas==1.5.3
+scipy==1.17.0
+
+# 回测框架
+bt==1.1.2
+ffn==1.1.2
+
+# 机器学习与数据处理
+scikit-learn==1.8.0
+joblib==1.5.3
+
+# 数据可视化
+matplotlib==3.10.8
+
+# Excel文件处理
+openpyxl==3.1.5
+
+# 网络请求
+requests==2.32.5
+urllib3==2.6.3
+
+# 进度条
+tqdm==4.67.3
+
+# 其他工具
+pytz==2025.2
+python-dateutil==2.9.0.post0
+six==1.17.0
+packaging==24.2

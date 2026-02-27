@@ -1,0 +1,40 @@
+# Python cache / build
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+
+# Virtual env
+.venv/
+venv/
+ENV/
+.env
+.env.*
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Runtime artifacts
+outputs/
+logs/
+tmp/
+*.out
+
+# Local backup
+legacy/

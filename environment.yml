@@ -1,0 +1,28 @@
+# 固定版本的环境配置文件 - 基于测试通过的兼容版本
+# 创建日期: 2026-02-22
+# Python版本: 3.11.14
+name: signalfive_py311
+channels:
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/free
+dependencies:
+  - python>=3.9,<3.12
+  - numpy==1.26.4
+  - pandas==1.5.3
+  - scipy==1.17.0
+  - scikit-learn==1.8.0
+  - joblib==1.5.3
+  - matplotlib==3.10.8
+  - openpyxl==3.1.5
+  - requests==2.32.5
+  - urllib3==2.6.3
+  - tqdm==4.67.3
+  - pytz==2025.2
+  - python-dateutil==2.9.0.post0
+  - six==1.17.0
+  - packaging=24.2
+  - pip
+  - pip:
+    - bt==1.1.2
+    - ffn==1.1.2
