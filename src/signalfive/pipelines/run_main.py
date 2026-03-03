@@ -1,5 +1,5 @@
 """
-主流程脚本_1（固定参数版）
+主流程脚本_1 -- “等权组合”与“优化组合(固定优化参数)”结果
 ================================
 项目主流程（5步）：
   1) 因子设计和测试
@@ -150,7 +150,7 @@ def _validate_fixed_configs(optimization_cfg: dict, regime_cfg: dict) -> None:
 
 
 def main() -> None:
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f") # 20260227_212804_405372
     run_dir = OUTPUT_DIR / ts
     run_dir.mkdir(parents=True, exist_ok=True)
     print(f"本次运行输出目录: {run_dir}\n")
