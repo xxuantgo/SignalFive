@@ -3,14 +3,42 @@
 严格时间推进 OOS 评估（分段重调参 + 净值拼接）
 =================================================
 
-核心原则：
-  1) 外层测试段逐段推进
-  2) 每个外层段开始前，只用历史数据重新调参
-  3) 用该段参数只跑该段 OOS，再将各段净值首尾拼接
+定位与目标：
+  - 本脚本用于“严格样本外评估”，不替代 run_main.py 的固定参数基线回测。
+  - 核心任务是：对每个外层 OOS 时间段独立调参、独立回测，再拼接成完整 OOS 净值。
+  - 默认优化器为 hybrid_cvar_rp，与项目主方案保持一致。
 
-说明：
-  - 本脚本不替代 run_main.py；用于更严格的样本外评估。
-  - 默认优化器使用 hybrid_cvar_rp，与当前项目主方案一致。
+为什么要用本脚本：
+  - 解决“先全样本调参再回测”带来的前视偏差风险。
+  - 将参数选择严格限制在当时可见历史内，评估更接近真实投研落地流程。
+
+核心原则（防泄漏约束）：
+  1) 外层测试段（outer folds）按时间顺序推进；
+  2) 每个 outer 段只使用该段开始日前的数据做调参（tune_end = outer_start 前一交易日）；
+  3) 选出的参数只用于当前 outer 段，不跨段共享；
+  4) 各段 OOS 净值仅做首尾拼接，不回填、不重估历史参数。
+
+模型调参（本脚本重点）：
+  - 调参引擎：Optuna + TPE（每个 outer 段独立建 study）。
+  - 调参数据：当前 outer 的 inner folds（WFO），必要时回退为单折验证。
+  - 搜索参数：top_n / cvar_alpha / cov_window / turnover_lambda / hybrid_beta / cvar_method。
+  - 目标函数：以 inner folds 的 Sharpe 为核心，
+    同时惩罚波动（std）、差尾部（worst fold）和换手（turnover），强调稳健性。
+  - 冷启动机制：可配置前 N 个 outer 段不跑 Bayes，改用锚定参数（anchor_no_bayes）。
+
+端到端流程概览：
+  Step 0) 加载数据；
+  Step 1) 准备信号（复用缓存或 fresh 重算：合成因子 + 宏观仓位）；
+  Step 2) 构建 outer OOS 分段；
+  Step 3) 对每个 outer 段执行“内层调参 -> 外层回测”；
+  Step 4) 导出 trial/选参/分段绩效；
+  Step 5) 拼接各 outer 段净值并输出总绩效摘要与可选图表。
+
+主要输出文件：
+  - STRICT_OOS_trials.csv：每个 outer 的所有 trial 明细；
+  - STRICT_OOS_selected_params.csv：每个 outer 最终采用参数；
+  - STRICT_OOS_segment_performance.csv：每个 outer 段独立绩效；
+  - 严格OOS拼接_净值序列.csv / 严格OOS拼接_绩效汇总.csv / 严格OOS拼接_摘要.json。
 """
 from __future__ import annotations
 
