@@ -13,9 +13,79 @@ DATA_DIR = PROJECT_DIR / "data"
 OUTPUT_DIR = PROJECT_DIR / "outputs"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# 原始数据文件
-PRICE_FILE = DATA_DIR / "附件2 ETF日频量价数据（开盘、收盘、高、低、成交量、成交额）.csv"
-MACRO_FILE = DATA_DIR / "附件3 高频经济指标（信用利差、期限利差、汇率等）.csv"
+# ========== 数据版本配置 ==========
+# 数据版本管理：支持多版本数据存储和灵活切换
+# 数据目录结构：
+#   data/
+#   ├── versions/              # 各版本数据存储
+#   │   ├── v20251030/         # 版本1：截止到2025-10-30
+#   │   │   ├── price.csv
+#   │   │   └── macro.csv
+#   │   └── v20260313/         # 版本2：截止到2026-03-13（增量更新）
+#   │       ├── price.csv
+#   │       └── macro.csv
+#   ├── current/               # 当前使用版本（软链接或复制）
+#   │   ├── price.csv
+#   │   └── macro.csv
+#   └── raw/                   # 原始附件文件（保留）
+#
+# 使用方式：
+#   1. 设置 DATA_VERSION = "v20251030" 或 "v20260313" 使用特定版本
+#   2. 设置 DATA_VERSION = "current" 使用当前版本
+#   3. 设置 DATA_VERSION = "auto" 自动选择最新版本（默认）
+
+DATA_VERSION = "auto"  # 可选: "auto", "current", "v20251030", "v20260313" 等
+
+# 数据版本目录
+VERSIONS_DIR = DATA_DIR / "versions"
+CURRENT_DIR = DATA_DIR / "current"
+RAW_DIR = DATA_DIR / "raw"
+
+
+def resolve_data_paths(version: str = "auto") -> tuple[Path, Path]:
+    """
+    解析数据文件路径
+    
+    Args:
+        version: 数据版本标识
+            - "auto": 自动选择最新版本（versions目录中日期最大的版本）
+            - "current": 使用 current/ 目录下的数据
+            - "vYYYYMMDD": 使用特定版本目录
+    
+    Returns:
+        (price_file, macro_file) 的 Path 元组
+    """
+    if version == "current":
+        price_file = CURRENT_DIR / "price.csv"
+        macro_file = CURRENT_DIR / "macro.csv"
+    elif version.startswith("v") and (VERSIONS_DIR / version).exists():
+        version_dir = VERSIONS_DIR / version
+        price_file = version_dir / "price.csv"
+        macro_file = version_dir / "macro.csv"
+    elif version == "auto":
+        # 自动选择最新版本：扫描 versions 目录，选择日期最大的版本
+        version_dirs = [d for d in VERSIONS_DIR.iterdir() if d.is_dir() and d.name.startswith("v")]
+        if not version_dirs:
+            # 回退到原始数据文件
+            price_file = DATA_DIR / "附件2 ETF日频量价数据（开盘、收盘、高、低、成交量、成交额）.csv"
+            macro_file = DATA_DIR / "附件3 高频经济指标（信用利差、期限利差、汇率等）.csv"
+        else:
+            # 按版本名称排序，取最后一个（最新的）
+            latest_version = sorted(version_dirs, key=lambda x: x.name)[-1]
+            price_file = latest_version / "price.csv"
+            macro_file = latest_version / "macro.csv"
+    else:
+        # 默认回退到原始数据文件
+        price_file = DATA_DIR / "附件2 ETF日频量价数据（开盘、收盘、高、低、成交量、成交额）.csv"
+        macro_file = DATA_DIR / "附件3 高频经济指标（信用利差、期限利差、汇率等）.csv"
+    
+    return price_file, macro_file
+
+
+# 动态解析当前版本的数据路径
+PRICE_FILE, MACRO_FILE = resolve_data_paths(DATA_VERSION)
+
+# 原始数据文件（保留向后兼容）
 PRODUCT_POOL_FILE = DATA_DIR / "附件1 28只非债券ETF产品池.xlsx"
 
 # ========== 回测参数 ==========

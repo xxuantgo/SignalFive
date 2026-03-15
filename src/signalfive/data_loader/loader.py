@@ -13,7 +13,7 @@ import pandas as pd
 from pathlib import Path
 from typing import Optional
 from signalfive.config import (
-    DATA_DIR, PRICE_FILE, MACRO_FILE, PRODUCT_POOL_FILE, BACKTEST_START,
+    DATA_DIR, PRICE_FILE, MACRO_FILE, PRODUCT_POOL_FILE, BACKTEST_START, resolve_data_paths,
 )
 
 
@@ -187,7 +187,13 @@ def get_rebalance_dates_from_start(close_matrix: pd.DataFrame,
 # 便捷接口
 # ---------------------------------------------------------------------------
 
-def load_all():
+def load_all(
+    version: Optional[str] = None,
+    price_path: Optional[Path] = None,
+    macro_path: Optional[Path] = None,
+    data_start: Optional[str] = None,
+    data_end: Optional[str] = None,
+):
     """
     一键加载所有数据，返回字典：
       {
@@ -196,15 +202,51 @@ def load_all():
         'aligned': 对齐后的宽表,
         'close_matrix': 收盘价矩阵 (date × sec),
         'product_pool': 产品池,
+        'data_range': {'start': 数据起始日, 'end': 数据截止日},
       }
+    
+    Args:
+        version: 数据版本，如 "v20251030", "v20260313", "current", "auto"
+                 为 None 时使用 base.py 中配置的 DATA_VERSION
+        price_path: 直接指定量价数据文件路径（优先级高于version）
+        macro_path: 直接指定宏观数据文件路径（优先级高于version）
+        data_start: 数据起始日期过滤（格式：YYYY-MM-DD），只加载 >= 该日期的数据
+        data_end: 数据截止日期过滤（格式：YYYY-MM-DD），只加载 <= 该日期的数据
     """
+    # 解析数据路径
+    if price_path is None or macro_path is None:
+        if version is not None:
+            resolved_price, resolved_macro = resolve_data_paths(version)
+        else:
+            resolved_price, resolved_macro = PRICE_FILE, MACRO_FILE
+        price_path = price_path or resolved_price
+        macro_path = macro_path or resolved_macro
+    
+    print(f"数据路径: price={price_path}, macro={macro_path}")
+    
     print("加载量价数据...")
-    price = load_price()
+    price = load_price(path=price_path)
+    
+    # 应用日期范围过滤
+    if data_start is not None:
+        start_ts = pd.Timestamp(data_start)
+        price = price[price["date"] >= start_ts].copy()
+    if data_end is not None:
+        end_ts = pd.Timestamp(data_end)
+        price = price[price["date"] <= end_ts].copy()
+    
     print(f"  量价: {price['date'].min().date()} ~ {price['date'].max().date()}, "
           f"{price['sec'].nunique()} 只 ETF, {len(price)} 行")
 
     print("加载宏观数据...")
-    macro = load_macro()
+    macro = load_macro(path=macro_path)
+    
+    # 应用日期范围过滤
+    if data_start is not None:
+        macro = macro[macro["date"] >= start_ts].copy()
+    if data_end is not None:
+        macro = macro[macro["date"] <= end_ts].copy()
+    
     print(f"  宏观: {len(macro)} 行, {len(macro.columns)-1} 个指标")
 
     print("构建对齐宽表...")
@@ -215,6 +257,11 @@ def load_all():
     print(f"  矩阵: {close_matrix.shape[0]} 天 × {close_matrix.shape[1]} 只 ETF")
 
     product_pool = load_product_pool()
+    
+    data_range = {
+        "start": price["date"].min().date().isoformat() if not price.empty else None,
+        "end": price["date"].max().date().isoformat() if not price.empty else None,
+    }
 
     return {
         "price": price,
@@ -222,6 +269,7 @@ def load_all():
         "aligned": aligned,
         "close_matrix": close_matrix,
         "product_pool": product_pool,
+        "data_range": data_range,
     }
 
 

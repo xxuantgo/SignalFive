@@ -1,5 +1,5 @@
 """
-主流程脚本_1 -- “等权组合”与“优化组合(固定优化参数)”结果
+主流程脚本_1 -- "等权组合"与"优化组合(固定优化参数)"结果
 ================================
 项目主流程（5步）：
   1) 因子设计和测试
@@ -10,8 +10,8 @@
 
 说明：
   - run_main 仅使用 base.py 固定参数，不做命令行覆盖和在线调参。-- 读取并校验组合参数（top_n/cov_window/cvar_alpha/cvar_method/turnover_lambda/hybrid_beta/max_weight）。
-  - 回测区间口径：BACKTEST_START(2021-01-04) ~ 2025-10-30。
-  - 一次运行同时产出“等权组合”与“优化组合(固定优化参数)”两套基线回测结果。
+  - 回测区间口径：BACKTEST_START(2021-01-04) ~ 回测终点（可通过 --backtest-end 指定）。
+  - 一次运行同时产出"等权组合"与"优化组合(固定优化参数)"两套基线回测结果。
   - 关键防泄漏约束：
   - 调仓日为每周首个交易日；
   - 调仓信号使用前一交易日；
@@ -27,11 +27,28 @@
      - 优化计划：调仓日先选 TopN，再用历史窗口收益进行风险优化（RP/MV/CVaR/Hybrid）。
   8) 将 Regime 仓位系数应用到两类调仓计划（总仓位可小于 1，剩余为现金）。
   9) 批量运行回测，导出净值、图表与绩效汇总。
+
+数据版本选择（通过命令行参数）：
+  --data-version: 选择数据版本
+    - "auto": 自动选择最新版本（默认）
+    - "v20251030": 使用截止到2025-10-30的数据
+    - "v20260313": 使用截止到2026-03-13的数据（增量更新）
+    - "current": 使用 current/ 目录下的数据
+  
+回测区间选择：
+  --backtest-start: 回测起始日（默认：2021-01-04）
+  --backtest-end: 回测截止日（默认：数据最新日期）
+  
+数据日期范围选择（用于控制加载的数据量）：
+  --data-start: 数据起始日（用于过滤加载的数据，应 <= backtest-start）
+  --data-end: 数据截止日（用于过滤加载的数据，应 >= backtest-end）
   
 """
 
 
+import argparse
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 
@@ -74,10 +91,14 @@ from signalfive.portfolio.regime import calc_position_scale, apply_position_scal
 
 STRATEGY_EQ_NAME = "等权组合"
 STRATEGY_OPT_FIXED_NAME = "优化组合(固定优化参数)"
-BACKTEST_END = "2025-10-30"
+DEFAULT_BACKTEST_END = None  # 默认使用数据最新日期
 
 
-def _resolve_fixed_run_configs() -> tuple[dict, dict, dict, dict]:
+def _resolve_fixed_run_configs(
+    backtest_start: str = BACKTEST_START,
+    backtest_end: str | None = None,
+    data_end: str | None = None,
+) -> tuple[dict, dict, dict, dict]:
     """按流程分组整理 run_main 使用的固定参数。"""
     default_params = dict(DEFAULT_PORTFOLIO_PARAMS)
 
@@ -107,9 +128,17 @@ def _resolve_fixed_run_configs() -> tuple[dict, dict, dict, dict]:
         "max_daily_step": float(REGIME_MAX_STEP) if float(REGIME_MAX_STEP) > 0 else None,
     }
 
+    # 确定回测终点：优先使用传入的 backtest_end，否则使用 data_end，最后回退到默认值
+    if backtest_end is not None:
+        end_date = backtest_end
+    elif data_end is not None:
+        end_date = data_end
+    else:
+        end_date = "2025-10-30"  # 回退默认值
+
     backtest_cfg = {
-        "start": str(BACKTEST_START),
-        "end": str(BACKTEST_END),
+        "start": str(backtest_start),
+        "end": str(end_date),
     }
 
     _validate_fixed_configs(optimization_cfg=optimization_cfg, regime_cfg=regime_cfg)
@@ -149,13 +178,73 @@ def _validate_fixed_configs(optimization_cfg: dict, regime_cfg: dict) -> None:
         raise ValueError(f"REGIME_MAX_STEP 不能为负，当前为 {max_daily_step}")
 
 
+def _build_parser() -> argparse.ArgumentParser:
+    """构建命令行参数解析器"""
+    parser = argparse.ArgumentParser(description="SignalFive 主流程 - 等权与优化组合回测")
+    
+    # 数据版本选择
+    parser.add_argument(
+        "--data-version",
+        type=str,
+        default="auto",
+        help='数据版本选择: "auto"(自动最新), "v20251030", "v20260313", "current"'
+    )
+    parser.add_argument(
+        "--data-start",
+        type=str,
+        default=None,
+        help="数据起始日期过滤 (YYYY-MM-DD)，用于控制加载的数据量"
+    )
+    parser.add_argument(
+        "--data-end",
+        type=str,
+        default=None,
+        help="数据截止日期过滤 (YYYY-MM-DD)，用于控制加载的数据量"
+    )
+    
+    # 回测区间选择
+    parser.add_argument(
+        "--backtest-start",
+        type=str,
+        default=BACKTEST_START,
+        help=f"回测起始日 (默认: {BACKTEST_START})"
+    )
+    parser.add_argument(
+        "--backtest-end",
+        type=str,
+        default=None,
+        help="回测截止日 (默认: 使用数据最新日期)"
+    )
+    
+    return parser
+
+
 def main() -> None:
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f") # 20260227_212804_405372
+    # 解析命令行参数
+    parser = _build_parser()
+    args = parser.parse_args()
+    
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")  # 20260227_212804_405372
     run_dir = OUTPUT_DIR / ts
     run_dir.mkdir(parents=True, exist_ok=True)
     print(f"本次运行输出目录: {run_dir}\n")
+    
+    # 打印数据版本和回测区间配置
+    print("=" * 60)
+    print("配置信息")
+    print("=" * 60)
+    print(f"数据版本: {args.data_version}")
+    if args.data_start:
+        print(f"数据起始过滤: {args.data_start}")
+    if args.data_end:
+        print(f"数据截止过滤: {args.data_end}")
+    print(f"回测区间: {args.backtest_start} ~ {args.backtest_end or '数据最新日期'}")
+    print()
 
-    factor_cfg, optimization_cfg, regime_cfg, backtest_cfg = _resolve_fixed_run_configs()
+    factor_cfg, optimization_cfg, regime_cfg, backtest_cfg = _resolve_fixed_run_configs(
+        backtest_start=args.backtest_start,
+        backtest_end=args.backtest_end,
+    )
 
     print("参数来源: base.py（固定参数，无命令行覆盖）")
     print("模型调参: run_main 不执行模型调参，直接使用固定优化参数。")
@@ -189,8 +278,20 @@ def main() -> None:
     # ====================================================================
     print("=" * 60)
     print("Step 1: 因子设计和测试（含数据加载）")
-    data = load_all()
+    
+    # 使用命令行参数加载数据
+    data = load_all(
+        version=args.data_version,
+        data_start=args.data_start,
+        data_end=args.data_end,
+    )
     close_matrix = data["close_matrix"]
+    
+    # 如果未指定回测终点，使用数据的最新日期
+    actual_data_end = data["data_range"]["end"]
+    if args.backtest_end is None and actual_data_end is not None:
+        backtest_cfg["end"] = actual_data_end
+        print(f"  自动设置回测终点: {actual_data_end}")
     print(f"  收盘价矩阵: {close_matrix.shape}")
 
     panel_wide, macro_df = compute_factors(data["aligned"])

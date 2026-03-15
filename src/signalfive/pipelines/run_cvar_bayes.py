@@ -11,6 +11,17 @@ CVaR/RP 混合优化器贝叶斯调参（WFO + RP 锚定正则）
 说明：
   - 候选策略使用 hybrid_cvar_rp（CVaR 与风险平价凸组合）。
   - max_weight 固定 35%，不参与搜索。
+
+数据版本选择（通过命令行参数）：
+  --data-version: 选择数据版本
+    - "auto": 自动选择最新版本（默认）
+    - "v20251030": 使用截止到2025-10-30的数据
+    - "v20260313": 使用截止到2026-03-13的数据（增量更新）
+    - "current": 使用 current/ 目录下的数据
+  
+数据日期范围选择：
+  --data-start: 数据起始日过滤（应 <= train-start）
+  --data-end: 数据截止日过滤（应 >= test-end）
 """
 from __future__ import annotations # 协方差估计, 
 
@@ -422,6 +433,27 @@ def _build_wfo_folds(
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="CVaR/RP 混合优化器贝叶斯调参（WFO）")
+    
+    # 数据版本选择
+    parser.add_argument(
+        "--data-version",
+        type=str,
+        default="auto",
+        help='数据版本选择: "auto"(自动最新), "v20251030", "v20260313", "current"'
+    )
+    parser.add_argument(
+        "--data-start",
+        type=str,
+        default=None,
+        help="数据起始日期过滤 (YYYY-MM-DD)，用于控制加载的数据量"
+    )
+    parser.add_argument(
+        "--data-end",
+        type=str,
+        default=None,
+        help="数据截止日期过滤 (YYYY-MM-DD)，用于控制加载的数据量"
+    )
+    
     parser.add_argument("--top-n", type=int, default=TOP_N, help="每期选股数量 Top N（当 low/high 未指定时使用）")
     parser.add_argument("--top-n-low", type=int, default=3, help="TopN 搜索下界")
     parser.add_argument("--top-n-high", type=int, default=7, help="TopN 搜索上界")
@@ -451,7 +483,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--train-start", type=str, default="2019-11-01", help="训练集起始日")
     parser.add_argument("--train-end", type=str, default="2020-12-31", help="训练集结束日")
     parser.add_argument("--test-start", type=str, default="2021-01-04", help="测试集起始日")
-    parser.add_argument("--test-end", type=str, default="2025-10-30", help="测试集结束日（默认=最后可用交易日）")
+    parser.add_argument("--test-end", type=str, default=None, help="测试集结束日（默认=数据最新日期）")
     parser.add_argument("--min-train-days", type=int, default=220, help="训练集最少交易日")
 
     # WFO 配置：基于 test-start 起点按年滚动
@@ -560,9 +592,26 @@ def main() -> None:
     print(f"输出目录: {run_dir}")
 
     print("=" * 60)
+    print("配置信息")
+    print("=" * 60)
+    print(f"数据版本: {args.data_version}")
+    if args.data_start:
+        print(f"数据起始过滤: {args.data_start}")
+    if args.data_end:
+        print(f"数据截止过滤: {args.data_end}")
+    print()
+    
+    print("=" * 60)
     print("Step 0: 数据加载")
-    data = load_all()
+    data = load_all(
+        version=args.data_version,
+        data_start=args.data_start,
+        data_end=args.data_end,
+    )
     close_matrix = data["close_matrix"].sort_index()
+    
+    # 打印实际加载的数据范围
+    print(f"  实际数据范围: {data['data_range']['start']} ~ {data['data_range']['end']}")
 
     reuse_run_dir = Path(args.reuse_run_dir).expanduser() if args.reuse_run_dir else None
     if reuse_run_dir is not None:
