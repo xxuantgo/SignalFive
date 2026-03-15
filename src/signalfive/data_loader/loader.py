@@ -83,7 +83,17 @@ def load_price(path: Optional[Path] = None,
     返回 DataFrame，列 = [date, sec, open, high, low, close, volume, amount]
     """
     path = path or PRICE_FILE
-    df = pd.read_csv(path)
+    # 尝试多种编码读取
+    encodings = ["utf-8", "gbk", "gb2312", "utf-8-sig"]
+    df = None
+    for encoding in encodings:
+        try:
+            df = pd.read_csv(path, encoding=encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+    if df is None:
+        raise ValueError(f"无法读取价格数据文件，请检查编码: {path}")
     df["date"] = pd.to_datetime(df["date"])
     for col in ["open", "high", "low", "close", "volume", "amount"]:
         if col in df.columns:
@@ -113,7 +123,17 @@ def load_macro(path: Optional[Path] = None) -> pd.DataFrame:
     返回 DataFrame，第一列为 date，其余列为各类指标
     """
     path = path or MACRO_FILE
-    df = pd.read_csv(path)
+    # 尝试多种编码读取
+    encodings = ["utf-8", "gbk", "gb2312", "utf-8-sig"]
+    df = None
+    for encoding in encodings:
+        try:
+            df = pd.read_csv(path, encoding=encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+    if df is None:
+        raise ValueError(f"无法读取宏观数据文件，请检查编码: {path}")
     # 首列可能是空列名或 Unnamed
     if df.columns[0].strip() == "" or "Unnamed" in str(df.columns[0]):
         df = df.rename(columns={df.columns[0]: "date"})
