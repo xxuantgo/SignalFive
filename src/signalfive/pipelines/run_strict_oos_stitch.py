@@ -511,17 +511,39 @@ def _build_parser() -> argparse.ArgumentParser:
     """定义命令行参数。
 
     参数分层：
+    - 数据版本选择：data-version/data-start/data-end
     - 时间分段参数：outer/inner 的窗口和步长
     - 搜索空间参数：top_n/alpha/window/lambda/beta/cvar_method
     - 调参过程参数：n_trials/seed/timeout
     - 目标函数惩罚项：std/worst/turnover
     """
     parser = argparse.ArgumentParser(description="严格时间推进 OOS：分段重调参 + 净值拼接")
+    
+    # 数据版本选择
+    parser.add_argument(
+        "--data-version",
+        type=str,
+        default="auto",
+        help='数据版本选择: "auto"(自动最新), "v20251030", "v20260313"'
+    )
+    parser.add_argument(
+        "--data-start",
+        type=str,
+        default=None,
+        help="数据起始日期过滤 (YYYY-MM-DD)"
+    )
+    parser.add_argument(
+        "--data-end",
+        type=str,
+        default=None,
+        help="数据截止日期过滤 (YYYY-MM-DD)"
+    )
+    
     parser.add_argument("--reuse-run-dir", type=str, default="", help="可选：复用 run_main 输出目录的信号缓存")
 
     parser.add_argument("--train-start-min", type=str, default="2019-11-01", help="最早可用训练起点")
     parser.add_argument("--outer-test-start", type=str, default=BACKTEST_START, help="外层OOS起点")
-    parser.add_argument("--outer-test-end", type=str, default="2025-10-30", help="外层OOS终点")
+    parser.add_argument("--outer-test-end", type=str, default=None, help="外层OOS终点（默认=数据最新日期）")
     parser.add_argument("--outer-test-years", type=int, default=1, help="外层每段测试长度（年）")
     parser.add_argument("--outer-step-years", type=int, default=1, help="外层滚动步长（年）")
     parser.add_argument("--outer-test-months", type=int, default=0, help="外层每段测试长度（月，>0 时优先于 years）")
@@ -735,9 +757,26 @@ def main() -> None:
     # B. Step 0 - 加载基础数据
     # ---------------------------------------------------------------------
     print("=" * 70)
+    print("配置信息")
+    print("=" * 70)
+    print(f"数据版本: {args.data_version}")
+    if args.data_start:
+        print(f"数据起始过滤: {args.data_start}")
+    if args.data_end:
+        print(f"数据截止过滤: {args.data_end}")
+    print()
+    
+    print("=" * 70)
     print("Step 0: 加载数据")
-    data = load_all()
+    data = load_all(
+        version=args.data_version,
+        data_start=args.data_start,
+        data_end=args.data_end,
+    )
     close_matrix = data["close_matrix"].sort_index()
+    
+    # 打印实际加载的数据范围
+    print(f"  实际数据范围: {data['data_range']['start']} ~ {data['data_range']['end']}")
 
     # ---------------------------------------------------------------------
     # C. Step 1 - 准备信号（合成因子 + 宏观仓位系数）
