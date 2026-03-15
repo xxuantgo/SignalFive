@@ -26,8 +26,12 @@ def load_product_pool(path: Optional[Path] = None) -> pd.DataFrame:
     path = path or PRODUCT_POOL_FILE
     if not path.exists():
         print(f"Warning: 产品池文件不存在 {path}")
+        print(f"  DATA_DIR: {DATA_DIR}")
+        print(f"  PRODUCT_POOL_FILE: {PRODUCT_POOL_FILE}")
         return pd.DataFrame()
-    return pd.read_excel(path, sheet_name=0)
+    df = pd.read_excel(path, sheet_name=0)
+    print(f"  产品池: {len(df)} 只 ETF")
+    return df
 
 
 def _normalize_sec_code(code) -> str:
@@ -56,15 +60,18 @@ def _normalize_sec_code(code) -> str:
 
 def _extract_allowed_secs(product_pool: pd.DataFrame) -> set[str]:
     if product_pool.empty:
+        print("  Warning: 产品池为空")
         return set()
     sec_col = next(
         (c for c in product_pool.columns if "证券代码" in str(c)),
         product_pool.columns[0],
     )
+    raw_codes = product_pool[sec_col].tolist()
     allowed = {
-        _normalize_sec_code(x) for x in product_pool[sec_col].tolist()
+        _normalize_sec_code(x) for x in raw_codes
     }
     allowed.discard("")
+    print(f"  允许交易的 ETF: {len(allowed)} 只")
     return allowed
 
 

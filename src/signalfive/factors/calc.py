@@ -107,6 +107,8 @@ def winsorize_cross_section(factor_matrix: pd.DataFrame,
     """
     截面去极值 (Winsorize)：每天对因子值裁剪到 [lower_pct, upper_pct] 分位数。
     """
+    if factor_matrix.empty or factor_matrix.shape[1] == 0:
+        return factor_matrix
     lower = factor_matrix.quantile(lower_pct, axis=1)
     upper = factor_matrix.quantile(upper_pct, axis=1)
     return factor_matrix.clip(lower=lower, upper=upper, axis=0)
