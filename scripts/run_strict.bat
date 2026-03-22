@@ -1,5 +1,7 @@
 ﻿@echo off
 setlocal enabledelayedexpansion
+chcp 65001 >nul 2>&1
+set "PYTHONIOENCODING=utf-8"
 
 cd /d "%~dp0\.."
 if not exist logs mkdir logs
@@ -12,11 +14,12 @@ echo [SignalFive] Log file: %LOG_FILE%
 
 set "PYTHONPATH=%CD%\src;%PYTHONPATH%"
 python src/signalfive/pipelines/run_strict_oos_stitch.py ^
+  --data-version v20260313 ^
   --n-trials 180 ^
   --n-startup-trials 36 ^
   --seed 7 ^
   --outer-test-start 2021-01-04 ^
-  --outer-test-end 2025-10-30 ^
+  --outer-test-end 2026-03-13 ^
   --outer-test-months 12 ^
   --outer-step-months 12 ^
   --inner-train-months 24 ^
